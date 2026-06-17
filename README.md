@@ -1,6 +1,15 @@
-# Twindem
+<p align="center">
+  <img src="docs/images/logo.png" alt="Twindem" width="120" />
+</p>
 
-**AI delivery you can trust and prove.**
+<h1 align="center">Twindem</h1>
+
+<p align="center"><strong>AI delivery you can trust and prove.</strong></p>
+
+<p align="center">
+  <a href="https://twindem.ai">twindem.ai</a> &nbsp;·&nbsp;
+  <a href="mailto:hello@twindem.ai">hello@twindem.ai</a>
+</p>
 
 Twindem is a macOS Electron app for governed AI-assisted software delivery. It keeps AI work tied to a board, human gates, release runbooks, evidence, and an audit trail so teams can use AI coding agents without losing accountability.
 
@@ -14,6 +23,32 @@ AI coding agents are useful, but raw agent chats are hard to manage in a team or
 - **Two-agent review loop**: one agent authors/implements, another reviews, with a controlled review/fix loop.
 - **Local-first execution**: agents run as local CLI tools in your project folder; secrets stay on your machine.
 - **Budget-aware context**: Twindem compacts prompts, deduplicates repeated signals, and surfaces cost/usage warnings.
+
+## Screenshots
+
+**The board is the source of truth** — GitHub Projects or Jira, kept in sync both ways.
+
+![Board view](docs/images/board.png)
+
+**Two agents, one controlled loop** — Agent 1 authors and implements in a live terminal while you stay in control.
+
+![Dual-agent session](docs/images/session.png)
+
+**Start from a typed idea** — feature, bug, spike, architecture, research, or runbook, with attachments and your choice of agent.
+
+![New task](docs/images/new-task.png)
+
+**Agent 2 reviews and challenges** — a verdict with requested changes drives the automated review/fix loop.
+
+![Agent 2 review](docs/images/review.png)
+
+**Cost and workflow stay visible** — token/usage signals and the phase workflow on every session.
+
+![Cost and workflow](docs/images/cost-workflow.png)
+
+**Every phase leaves evidence** — briefs, gate transitions, and an audit trail you can prove.
+
+![Brief and evidence](docs/images/brief-evidence.png)
 
 ## What Twindem Does
 
@@ -99,6 +134,12 @@ The intended split is:
 
 The OSS core should expose clean extension points so the commercial layer can bolt on without becoming a fork.
 
+## Contact
+
+- Website: [twindem.ai](https://twindem.ai)
+- Email: [hello@twindem.ai](mailto:hello@twindem.ai)
+- Commercial licensing & team features: [hello@twindem.ai](mailto:hello@twindem.ai)
+
 ## License
 
 GNU Affero General Public License v3.0 (AGPL-3.0). See `LICENSE` and `NOTICE`.
@@ -109,6 +150,6 @@ users over a network, you must make your corresponding source available under AG
 You may not incorporate Twindem into a closed or proprietary product.
 
 A separate **commercial license** is available for organizations that want to use Twindem without
-the AGPL-3.0 obligations (e.g. building proprietary products on top). Contact the maintainers.
+the AGPL-3.0 obligations (e.g. building proprietary products on top). Contact us at [hello@twindem.ai](mailto:hello@twindem.ai).
 
 Contributions require a Contributor License Agreement before merge. See `CONTRIBUTING.md`.
