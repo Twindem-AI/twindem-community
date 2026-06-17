@@ -1,0 +1,54 @@
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+node_modules
+dist
+dist-electron
+dist-ssr
+*.local
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Build artifacts & local data
+release
+*.db
+*.sqlite
+.twindem/
+
+# Locally-installed agent CLIs: their settings/auth/state may contain
+# personal paths, project names, or credentials. Never publish.
+.claude/
+.codex/
+.gemini/
+.cursor/
+.aider*
+.continue/
+**/.claude/settings.local.json
+
+# Secrets — must stay local only, never uploaded
+secrets/
+*.bin
+*.pem
+*.key
+.env
+.env.*
+*.local
+
+# Internal task / planning notes
+/tasks
+tasks/

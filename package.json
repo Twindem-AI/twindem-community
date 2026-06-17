@@ -1,0 +1,94 @@
+{
+  "name": "twindem",
+  "private": true,
+  "version": "0.0.0",
+  "productName": "Twindem",
+  "description": "Provable AI delivery with local dual-agent workflows.",
+  "license": "AGPL-3.0-only",
+  "author": "Twindem contributors",
+  "homepage": "https://twindem.ai",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Twindem-AI/twindem-community.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Twindem-AI/twindem-community/issues"
+  },
+  "main": "dist-electron/electron/main/index.js",
+  "type": "module",
+  "scripts": {
+    "dev": "concurrently -k \"npm:dev:renderer\" \"npm:dev:main\" \"npm:dev:electron\"",
+    "dev:renderer": "vite --host 127.0.0.1",
+    "dev:main": "tsc -p tsconfig.electron.json --watch --preserveWatchOutput",
+    "dev:electron": "wait-on tcp:5173 dist-electron/electron/main/index.js && cross-env VITE_DEV_SERVER_URL=http://127.0.0.1:5173 electron .",
+    "build": "tsc -b && tsc -p tsconfig.electron.json && vite build",
+    "dist:dev": "npm run build && CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac dmg zip",
+    "dist": "npm run build && electron-builder --mac --x64 --arm64",
+    "dist:arm64": "npm run build && electron-builder --mac --arm64",
+    "dist:x64": "npm run build && electron-builder --mac --x64",
+    "lint": "eslint .",
+    "preview": "vite preview",
+    "start": "electron ."
+  },
+  "dependencies": {
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/xterm": "^6.0.0",
+    "better-sqlite3": "^12.10.0",
+    "node-pty": "^1.1.0",
+    "react": "^19.2.6",
+    "react-dom": "^19.2.6",
+    "zod": "^4.4.3"
+  },
+  "overrides": {
+    "form-data": "^4.0.6"
+  },
+  "build": {
+    "appId": "com.twindem.app",
+    "productName": "Twindem",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**",
+      "dist-electron/**",
+      "build/icon.*",
+      "package.json"
+    ],
+    "mac": {
+      "category": "public.app-category.developer-tools",
+      "icon": "build/icon.icns",
+      "target": [
+        { "target": "dmg", "arch": ["x64", "arm64"] },
+        { "target": "zip", "arch": ["x64", "arm64"] }
+      ],
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false,
+      "entitlements": "build/entitlements.mac.plist",
+      "entitlementsInherit": "build/entitlements.mac.plist",
+      "notarize": true
+    },
+    "dmg": {
+      "artifactName": "Twindem-${version}-${arch}.${ext}"
+    }
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^24.12.3",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^6.0.1",
+    "concurrently": "^10.0.3",
+    "cross-env": "^10.1.0",
+    "electron": "^39.8.10",
+    "electron-builder": "^26.15.2",
+    "eslint": "^10.3.0",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "eslint-plugin-react-refresh": "^0.5.2",
+    "globals": "^17.6.0",
+    "typescript": "~6.0.2",
+    "typescript-eslint": "^8.59.2",
+    "vite": "^8.0.12",
+    "wait-on": "^9.0.10"
+  }
+}
