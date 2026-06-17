@@ -21,9 +21,10 @@ jobs:
         uses: contributor-assistant/github-action@v2.6.1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # A classic PAT (repo scope) used to write/read the signatures file.
-          # Create it and add it as a repo secret named CLA_SIGNATURES_TOKEN.
-          PERSONAL_ACCESS_TOKEN: ${{ secrets.CLA_SIGNATURES_TOKEN }}
+          # Uses a dedicated PAT (repo scope) if you add a CLA_SIGNATURES_TOKEN
+          # secret; otherwise falls back to the built-in GITHUB_TOKEN so the bot
+          # works out of the box (same-repo signature storage).
+          PERSONAL_ACCESS_TOKEN: ${{ secrets.CLA_SIGNATURES_TOKEN || secrets.GITHUB_TOKEN }}
         with:
           path-to-signatures: "signatures/version1/cla.json"
           path-to-document: "https://github.com/Twindem-AI/twindem-community/blob/main/CLA.md"
