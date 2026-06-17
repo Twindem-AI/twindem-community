@@ -30,7 +30,7 @@ jobs:
           path-to-document: "https://github.com/Twindem-AI/twindem-community/blob/main/CLA.md"
           branch: "main"
           # Maintainers / bots that never need to sign.
-          allowlist: vashanea,*[bot]
+          allowlist: __cla_test_nobody__
           custom-pr-sign-comment: "I have read the CLA Document and I hereby sign the CLA"
           custom-notsigned-prcomment: "Thank you for your contribution. Before it can be merged, please read our [Contributor License Agreement](https://github.com/Twindem-AI/twindem-community/blob/main/CLA.md) and sign it by posting the comment below in this pull request."
           custom-allsigned-prcomment: "All contributors have signed the CLA. ✅"
