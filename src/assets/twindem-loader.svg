@@ -1,0 +1,33 @@
+<svg width="512" height="512" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <style>
+      .top {
+        animation: topBlueFade 1.8s ease-in-out infinite;
+      }
+
+      .bottom {
+        animation: bottomBlueFade 1.8s ease-in-out infinite;
+        animation-delay: 0.16s;
+      }
+
+      @keyframes topBlueFade {
+        0%, 100% { fill: #0B2D5E; }
+        50% { fill: #1F5DB8; }
+      }
+
+      @keyframes bottomBlueFade {
+        0%, 100% { fill: #243F66; }
+        50% { fill: #4A7DC4; }
+      }
+    </style>
+  </defs>
+
+  <rect width="512" height="512" fill="transparent"/>
+
+  <g transform="translate(256 250)">
+    <path class="top" d="M-160 -90 H-47 C-20 -90 -4 -73 -4 -47 V52 L-34 30 V-30 C-34 -45 -45 -56 -60 -56 H-145 C-158 -56 -166 -67 -170 -90 Z"/>
+    <path class="top" d="M160 -90 H47 C20 -90 4 -73 4 -47 V52 L34 30 V-30 C34 -45 45 -56 60 -56 H145 C158 -56 166 -67 170 -90 Z"/>
+    <path class="bottom" d="M-100 -30 H-58 L-54 10 H-88 C-104 10 -112 25 -104 43 C-88 78 -58 105 -20 132 V170 C-80 133 -127 88 -146 35 C-158 0 -140 -30 -100 -30 Z"/>
+    <path class="bottom" d="M100 -30 H58 L54 10 H88 C104 10 112 25 104 43 C88 78 58 105 20 132 V170 C80 133 127 88 146 35 C158 0 140 -30 100 -30 Z"/>
+  </g>
+</svg>
