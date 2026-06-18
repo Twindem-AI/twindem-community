@@ -1,7 +1,7 @@
 {
   "name": "twindem",
   "private": true,
-  "version": "0.0.0",
+  "version": "0.1.0",
   "productName": "Twindem",
   "description": "Provable AI delivery with local dual-agent workflows.",
   "license": "AGPL-3.0-only",
