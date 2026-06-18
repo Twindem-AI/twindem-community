@@ -69,7 +69,7 @@
       "notarize": true
     },
     "dmg": {
-      "artifactName": "Twindem-${version}-${arch}.${ext}"
+      "artifactName": "Twindem-${arch}.${ext}"
     },
     "publish": {
       "provider": "github",
