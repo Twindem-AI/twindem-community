@@ -61,6 +61,7 @@ export type SessionSummary = {
   spawnedOrder?: number;
   // Hidden from the session list (e.g. finished tasks). Still reachable via search.
   hidden?: boolean;
+  dangerouslySkipPermissions?: boolean;
 };
 
 export type AgentRunSummary = {
@@ -489,6 +490,7 @@ export type CreateSessionInput = {
   leftProvider?: string;
   rightRole?: string;
   rightProvider?: string;
+  dangerouslySkipPermissions?: boolean;
   roundTotal?: number;
   automationLevel?: "manual" | "semi" | "auto";
   // Absolute paths of files picked by the user; copied into <workspace>/.twindem/attachments/

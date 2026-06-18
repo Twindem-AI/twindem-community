@@ -4128,6 +4128,25 @@ textarea:focus {
   line-height: 1.35;
 }
 
+.session-permissions-panel {
+  display: grid;
+  gap: 5px;
+  padding: 10px 12px;
+  border: 0.5px solid rgb(190 82 69 / 28%);
+  border-radius: 8px;
+  background: rgb(190 82 69 / 7%);
+}
+
+.session-permissions-panel .checkbox-row {
+  margin: 0;
+}
+
+.session-permissions-panel small {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
 .task-reference-actions {
   flex: 0 0 auto;
   display: flex;
@@ -4211,6 +4230,85 @@ button.danger:hover {
 
 .danger-dialog h2 {
   color: #b3261e;
+}
+
+.projects-dialog {
+  max-width: 920px;
+}
+
+.projects-list {
+  display: grid;
+  align-content: start;
+  align-items: start;
+  gap: 10px;
+  padding: 14px 22px 22px;
+  overflow: auto;
+}
+
+.project-row-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 18px;
+  align-items: center;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+}
+
+.project-row-title {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.project-row-title span {
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgb(20 168 94 / 12%);
+  color: var(--green);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.project-row-card p {
+  margin: 6px 0 2px;
+  color: var(--muted);
+}
+
+.project-row-usage {
+  margin: 4px 0;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.project-row-card small {
+  display: block;
+  max-width: 560px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted);
+}
+
+.project-row-meta {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.project-row-meta > span {
+  color: var(--muted);
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.project-delete-confirm label {
+  display: grid;
+  gap: 6px;
+  width: 100%;
+  text-align: left;
 }
 
 .reference-picker-modal {

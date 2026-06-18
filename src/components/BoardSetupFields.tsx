@@ -54,7 +54,6 @@ export type JiraBoardHandlers = {
 };
 
 const BOARD_TABS: Array<{ value: BoardTypeChoice; label: string }> = [
-  { value: "none", label: "No board" },
   { value: "jira", label: "Jira" },
   { value: "github", label: "GitHub" }
 ];
@@ -264,14 +263,6 @@ export function BoardSetupFields({
         </>
       )}
 
-      {value.boardType === "none" && (
-        <div className="auth-card">
-          <div>
-            <strong>No external board</strong>
-            <p>Twindem keeps sessions local until you connect GitHub Project or Jira.</p>
-          </div>
-        </div>
-      )}
       <div className="board-capabilities">
         <small>What Twindem can do with this board</small>
         <ul>

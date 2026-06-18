@@ -48,6 +48,11 @@ const tandemApi: TandemApi = {
       ipcRenderer.on("app:openSettings", listener);
       return () => ipcRenderer.removeListener("app:openSettings", listener);
     },
+    onOpenProjects: (callback: () => void) => {
+      const listener = () => callback();
+      ipcRenderer.on("app:projects", listener);
+      return () => ipcRenderer.removeListener("app:projects", listener);
+    },
     onTasksChanged: (callback: () => void) => {
       const listener = () => callback();
       ipcRenderer.on("app:tasksChanged", listener);
@@ -67,14 +72,16 @@ const tandemApi: TandemApi = {
     save: (config: TandemConfig) =>
       ipcRenderer.invoke("config:save", config) as Promise<TandemResult<TandemConfig>>,
     pickDirectory: () => ipcRenderer.invoke("config:pickDirectory") as Promise<TandemResult<string | null>>,
+    validateDirectory: (path: string) =>
+      ipcRenderer.invoke("config:validateDirectory", path) as Promise<TandemResult<{ ok: boolean; message: string }>>,
     pickFiles: (defaultPath?: string) => ipcRenderer.invoke("config:pickFiles", defaultPath) as Promise<TandemResult<string[] | null>>,
     pickWorkspaceSubdirectory: (root: string) =>
       ipcRenderer.invoke("config:pickWorkspaceSubdirectory", root) as Promise<TandemResult<{ absolutePath: string; relativePath: string } | null>>,
     importFile: () => ipcRenderer.invoke("config:importFile") as Promise<TandemResult<TandemConfig | null>>,
     exportFile: (config: TandemConfig) =>
       ipcRenderer.invoke("config:exportFile", config) as Promise<TandemResult<string | null>>,
-    deleteProject: (workspaceName: string) =>
-      ipcRenderer.invoke("project:delete", workspaceName) as Promise<TandemResult<{ deletedSessions: number; project: string }>>
+    deleteProject: (workspaceName: string, options?: { deleteSourceFolder?: boolean; confirmationName?: string }) =>
+      ipcRenderer.invoke("project:delete", workspaceName, options) as Promise<TandemResult<{ deletedSessions: number; project: string; sourceFolderDeleted?: boolean; sourceFolderDeleteError?: string }>>
   },
   secrets: {
     set: (ref: string, value: string) =>
@@ -223,7 +230,9 @@ const tandemApi: TandemApi = {
   usage: {
     list: (sessionId: string) => ipcRenderer.invoke("usage:list", sessionId) as Promise<TandemResult<UsageEvent[]>>,
     summary: (sessionId: string) =>
-      ipcRenderer.invoke("usage:summary", sessionId) as Promise<TandemResult<UsageSummary | undefined>>
+      ipcRenderer.invoke("usage:summary", sessionId) as Promise<TandemResult<UsageSummary | undefined>>,
+    workspaceSummary: (workspaceName: string) =>
+      ipcRenderer.invoke("usage:workspaceSummary", workspaceName) as Promise<TandemResult<UsageSummary | undefined>>
   },
   jira: {
     listProjects: (creds: { siteUrl: string; email: string; apiToken: string }) =>

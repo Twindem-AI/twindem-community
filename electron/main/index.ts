@@ -14,6 +14,7 @@ import { execFile } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { appendFileSync, copyFileSync, existsSync, mkdirSync, readFileSync, realpathSync, rmSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { request as httpsRequest } from "node:https";
+import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { promisify } from "node:util";
@@ -72,6 +73,12 @@ let board: BoardProvider;
 
 const PTY_FLUSH_MS = 2000;
 const PTY_FLUSH_BYTES = 8192;
+
+// Electron's dev launcher reports itself as "Electron" on macOS unless the app name is set before
+// the application menu is initialized. Packaged builds also use productName, but local release
+// testing should show the same user-facing name.
+app.setName("Twindem");
+app.setAboutPanelOptions({ applicationName: "Twindem" });
 
 type PtyBuffer = {
   sessionId: string;
@@ -281,7 +288,7 @@ function createWindow(): void {
   });
 }
 
-function sendRendererAppEvent(channel: "app:newProject" | "app:openSettings" | "app:about"): void {
+function sendRendererAppEvent(channel: "app:newProject" | "app:openSettings" | "app:projects" | "app:about"): void {
   if (!mainWindow) createWindow();
   mainWindow?.show();
   mainWindow?.focus();
@@ -316,6 +323,10 @@ function createApplicationMenu(): void {
           label: "New Project...",
           accelerator: "CmdOrCtrl+N",
           click: () => sendRendererAppEvent("app:newProject")
+        },
+        {
+          label: "Projects...",
+          click: () => sendRendererAppEvent("app:projects")
         },
         {
           label: "Settings...",
@@ -366,16 +377,27 @@ function createApplicationMenu(): void {
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
 }
 
+type DeleteWorkspaceOptions = {
+  deleteSourceFolder?: boolean;
+  confirmationName?: string;
+};
+
 // Delete everything LOCAL for a project (workspace): its sessions + all their DB rows, the .twindem
-// scratch/cache inside the project folder, the saved Jira token, and the workspace config entry. Never
-// touches the user's code folder itself, and never touches the remote board (GitHub/Jira issues stay).
-async function deleteWorkspaceProject(workspaceName: string): Promise<{ deletedSessions: number; project: string }> {
+// scratch/cache inside the project folder, the saved Jira token, and the workspace config entry.
+// Never touches the remote board (GitHub/Jira issues stay). Source folder deletion is opt-in and
+// guarded by confirmation + path safety checks.
+async function deleteWorkspaceProject(
+  workspaceName: string,
+  options: DeleteWorkspaceOptions = {}
+): Promise<{ deletedSessions: number; project: string; sourceFolderDeleted?: boolean; sourceFolderDeleteError?: string }> {
   const config = loadTandemConfig();
   const workspace = config.workspaces.find((candidate) => candidate.name === workspaceName);
   if (!workspace) throw new Error("Project not found.");
   if (config.workspaces.length <= 1) {
     throw new Error("This is the only project — create another first, then delete this one.");
   }
+  const deleteSourceFolder = Boolean(options.deleteSourceFolder);
+  const sourceRoot = deleteSourceFolder ? safeProjectSourceRootForDelete(workspace.root, workspaceName, options.confirmationName) : null;
   // 1. Sessions (+ all cascading rows) for this workspace.
   const activeId = db.getActiveSessionId();
   const activeDetail = activeId ? db.getSession(activeId) : null;
@@ -385,7 +407,7 @@ async function deleteWorkspaceProject(workspaceName: string): Promise<{ deletedS
   }
   // 2. Twindem's local scratch/cache INSIDE the project folder (.twindem only — never the code itself).
   const root = workspace.root?.trim();
-  if (root) {
+  if (root && !deleteSourceFolder) {
     try {
       const scratch = join(root, ".twindem");
       if (existsSync(scratch)) rmSync(scratch, { recursive: true, force: true });
@@ -410,7 +432,49 @@ async function deleteWorkspaceProject(workspaceName: string): Promise<{ deletedS
     workspaces: nextWorkspaces,
     defaults: { ...config.defaults, workspaceName: nextDefault }
   });
-  return { deletedSessions, project: workspaceName };
+  let sourceFolderDeleted = false;
+  let sourceFolderDeleteError: string | undefined;
+  if (sourceRoot) {
+    try {
+      rmSync(sourceRoot, { recursive: true, force: true });
+      sourceFolderDeleted = true;
+    } catch (error) {
+      sourceFolderDeleteError = error instanceof Error ? error.message : String(error);
+    }
+  }
+  return { deletedSessions, project: workspaceName, sourceFolderDeleted, sourceFolderDeleteError };
+}
+
+function safeProjectSourceRootForDelete(root: string | undefined, workspaceName: string, confirmationName?: string): string {
+  if (confirmationName !== workspaceName) {
+    throw new Error("Type the exact project name before deleting the source folder.");
+  }
+  const value = root?.trim();
+  if (!value) throw new Error("Project has no source folder configured.");
+  if (!existsSync(value)) throw new Error(`Source folder does not exist: ${value}`);
+  const stats = statSync(value);
+  if (!stats.isDirectory()) throw new Error(`Source path is not a folder: ${value}`);
+  const real = realpathSync(value);
+  const home = realpathSync(homedir());
+  const dangerous = new Set([
+    "/",
+    home,
+    join(home, "Desktop"),
+    join(home, "Documents"),
+    join(home, "Downloads"),
+    join(home, "dev"),
+    join(home, "Dev"),
+    join(home, "Projects"),
+    join(home, "projects")
+  ]);
+  if (dangerous.has(real)) {
+    throw new Error(`Refusing to delete broad folder: ${real}`);
+  }
+  const name = basename(real);
+  if (!name || name === "." || name === ".." || name.startsWith(".")) {
+    throw new Error(`Refusing to delete suspicious source folder: ${real}`);
+  }
+  return real;
 }
 
 async function safe<T>(operation: () => T | Promise<T>): Promise<TandemResult<T>> {
@@ -429,7 +493,9 @@ function registerIpc(): void {
       setAttentionBadge(Boolean(active));
     })
   );
-  ipcMain.handle("project:delete", (_event, workspaceName: string) => safe(() => deleteWorkspaceProject(workspaceName)));
+  ipcMain.handle("project:delete", (_event, workspaceName: string, options?: DeleteWorkspaceOptions) =>
+    safe(() => deleteWorkspaceProject(workspaceName, options))
+  );
   ipcMain.handle("config:get", () => safe(() => loadTandemConfig()));
   ipcMain.handle("config:save", (_event, config: TandemConfig) =>
     safe(() => {
@@ -438,6 +504,7 @@ function registerIpc(): void {
     })
   );
   ipcMain.handle("config:pickDirectory", () => safe(() => pickDirectory()));
+  ipcMain.handle("config:validateDirectory", (_event, path: string) => safe(() => validateDirectory(path)));
   ipcMain.handle("config:pickFiles", (_event, defaultPath?: string) => safe(() => pickFiles(defaultPath)));
   ipcMain.handle("config:importFile", () =>
     safe(() => {
@@ -514,6 +581,12 @@ function registerIpc(): void {
     safe(() => {
       flushUsageAccumulators();
       return db.usageSummary(sessionId);
+    })
+  );
+  ipcMain.handle("usage:workspaceSummary", (_event, workspaceName: string) =>
+    safe(() => {
+      flushUsageAccumulators();
+      return db.workspaceUsageSummary(workspaceName);
     })
   );
   ipcMain.handle(
@@ -1077,6 +1150,14 @@ async function pickDirectory(): Promise<string | null> {
   };
   const result = mainWindow ? await dialog.showOpenDialog(mainWindow, options) : await dialog.showOpenDialog(options);
   return result.canceled ? null : result.filePaths[0] ?? null;
+}
+
+function validateDirectory(path: string): { ok: boolean; message: string } {
+  const value = path.trim();
+  if (!value) return { ok: false, message: "Choose the project/application folder first." };
+  if (!existsSync(value)) return { ok: false, message: `Project folder does not exist: ${value}` };
+  if (!statSync(value).isDirectory()) return { ok: false, message: `Project path is not a folder: ${value}` };
+  return { ok: true, message: "Project folder exists." };
 }
 
 // Pick (or create) a subdirectory under the project root. Validated in MAIN (realpath/under-root) — the
@@ -2616,12 +2697,17 @@ async function transitionWorkflow(
   const config = loadTandemConfig();
   const project = activeWorkspace(config, detail.session.workspaceName);
   const ideaType = ideaTypeDefinition(detail.session.ideaType);
-  // Deploy evidence gates (smoke tests, final verification…) only apply to deployable feature
+  // UAT is the action that produces deploy evidence. Do not require deploy_evidence before the
+  // Release Operator has a chance to run the UAT runbook/command; require evidence only for later
+  // completion gates.
+  //
+  // Deploy completion gates (smoke tests, final verification…) only apply to deployable feature
   // delivery. A bug's Done means "confirmed fixed" (regression verification), not "production
   // release completed", so the release gate must not block closing a bug.
   const requiredGateKeys =
     ideaType.requiresImplementation &&
     isDeployableWorkspace(config, project) &&
+    target !== "uat" &&
     !(target === "done" && ideaType.key === "bug")
       ? gateKeys(config, detail, target)
       : [];

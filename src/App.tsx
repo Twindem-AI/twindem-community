@@ -1,4 +1,4 @@
-import { type CSSProperties, type PointerEvent as ReactPointerEvent, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, type CSSProperties, type PointerEvent as ReactPointerEvent, useEffect, useMemo, useRef, useState } from "react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
@@ -25,6 +25,7 @@ import type {
   SessionSummary,
   TaskReviewVerdict,
   UpdateSessionInput,
+  UsageSummary,
   WorkflowTransitionTarget,
   WorkflowActionResult
 } from "../shared/domain";
@@ -391,6 +392,7 @@ function App() {
   const [onboardingMode, setOnboardingMode] = useState<OnboardingMode>("setup");
   const [newSessionOpen, setNewSessionOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [projectsOpen, setProjectsOpen] = useState(false);
   const [githubAuthStatus, setGithubAuthStatus] = useState<GitHubAuthStatus | null>(null);
   const [githubAuthChecking, setGithubAuthChecking] = useState(false);
   const [automationLevel, setAutomationLevel] = useState<AutomationLevel>("auto");
@@ -603,6 +605,9 @@ function App() {
     const offOpenSettings = window.tandem.app.onOpenSettings(() => {
       void openSettings();
     });
+    const offOpenProjects = window.tandem.app.onOpenProjects(() => {
+      setProjectsOpen(true);
+    });
     // Backfill (or any main-side task creation) finished — re-list so new NOT STARTED tasks appear.
     const offTasksChanged = window.tandem.app.onTasksChanged(() => {
       void window.tandem.sessions.list().then((r) => {
@@ -616,6 +621,7 @@ function App() {
     return () => {
       offNewProject();
       offOpenSettings();
+      offOpenProjects();
       offTasksChanged();
       offAbout();
     };
@@ -1530,7 +1536,7 @@ function App() {
     const previousRun = latestRunForSide(targetDetail, side);
     const nativeSessionId = previousRun?.nativeSessionId;
     const nativeSessionName = previousRun?.nativeSessionName || `twindem-${targetDetail.session.id}-${side}`;
-    const launch = resolveAgentLaunch(provider, resume);
+    const launch = resolveAgentLaunch(provider, resume, targetDetail.session.dangerouslySkipPermissions);
     const { command, args } = launch;
     if (!command?.trim()) {
       throw new Error(`No command configured for side ${side}. Open Setup or Settings and choose an agent CLI.`);
@@ -2522,7 +2528,7 @@ function App() {
         const prodWorkspace = liveConfig ? activeWorkspace(liveConfig, current.session.workspaceName) : undefined;
         const runbook = prodWorkspace?.prodReleaseInstructions?.trim();
         if (runbook) {
-          await submitInstruction("R", releaseOpsInstruction(detailRef.current ?? current, "PRODUCTION", runbook, agentSignature("R")));
+          await submitInstruction("R", releaseOpsInstruction(detailRef.current ?? current, "PRODUCTION", runbook, agentSignature("R"), prodWorkspace));
           setNotice("PROD release running on Agent 2 — the task moves to Done when it confirms success.");
         } else {
           // No runbook → manual release; record it and move to Done now.
@@ -2913,7 +2919,7 @@ function App() {
         const uatRunbook = workspace?.uatReleaseInstructions?.trim();
         if (uatRunbook) {
           // Operator wrote a UAT runbook in Settings — the Release Operator executes it verbatim.
-          await submitInstruction("R", releaseOpsInstruction(detailRef.current ?? detail, "UAT", uatRunbook, agentSignature("R")));
+          await submitInstruction("R", releaseOpsInstruction(detailRef.current ?? detail, "UAT", uatRunbook, agentSignature("R"), workspace));
           const result = await unwrap(window.tandem.workflow.transition(detail.session.id, "uat"));
           applyWorkflowResult(result);
           setSessions(await unwrap(window.tandem.sessions.list()));
@@ -3169,6 +3175,23 @@ function App() {
       setSettingsOpen(false);
       setNotice("Settings saved");
     });
+  }
+
+  async function handleProjectDeleted(deletedName: string, deletedSessions: number, sourceFolderDeleted?: boolean) {
+    const refreshed = await window.tandem.config.get().then((r) => (r.ok ? r.data : null)).catch(() => null);
+    if (refreshed) {
+      setConfig(refreshed);
+      setPanes(panesFromConfig(refreshed));
+    }
+    const nextSessions = await unwrap(window.tandem.sessions.list()).catch(() => []);
+    setSessions(nextSessions);
+    if (detail?.session.workspaceName === deletedName) {
+      setDetail(null);
+      detailRef.current = null;
+    }
+    setNotice(
+      `Deleted project "${deletedName}" — ${deletedSessions} task${deletedSessions === 1 ? "" : "s"} and all local data removed.${sourceFolderDeleted ? " Source folder deleted too." : " Source folder kept."}`
+    );
   }
 
   async function switchActiveProject(name: string) {
@@ -3495,6 +3518,14 @@ function App() {
               >
                 ▦ Show board
               </button>
+              <button
+                className="show-board"
+                disabled={!phaseHasIssue}
+                title="Re-sync from the board and have Agent 1 re-assess the current state. Use this only if the issue/board changed outside Twindem — normal reopen costs no tokens."
+                onClick={() => void resyncFromBoard()}
+              >
+                ⟳ Re-sync
+              </button>
               {detail.session.artifactType === "idea" && !detail.session.issueNumber && !detail.session.boardItemId && (
                 <button
                   className="show-board"
@@ -3579,7 +3610,7 @@ function App() {
                 // "Create task" becomes a no-op once the task exists, so disable it then (shows done).
                 // Forward jumps that skip steps are allowed but confirmed (see goToPhase).
                 const clickable = phase.key === "create" ? !phaseHasIssue : phaseHasIssue;
-                return (
+                const phaseButton = (
                   <button
                     key={phase.key}
                     className={`phase-btn ${state}${reviewReady ? " review-passed" : ""}`}
@@ -3600,17 +3631,23 @@ function App() {
                     {reviewReady ? `✓ ${phase.label}` : phase.label}
                   </button>
                 );
+                if (activeIdeaType.requiresImplementation && phase.key === "prod") {
+                  return (
+                    <Fragment key="merge-before-prod">
+                      <button
+                        className={`phase-btn merge-prs ${phaseReached >= 3 ? "next" : "future"}`}
+                        disabled={!phaseHasIssue || phaseReached < 3 || phaseReached >= 4 || Boolean(phaseActionPending)}
+                        title="Merge the task's open PR(s) before production — delegates to Agent 2 as Release Operator."
+                        onClick={() => void mergeTaskPRs()}
+                      >
+                        ⛙ Merge PRs
+                      </button>
+                      {phaseButton}
+                    </Fragment>
+                  );
+                }
+                return phaseButton;
               })}
-              {activeIdeaType.requiresImplementation && (
-                <button
-                  className="phase-btn merge-prs"
-                  disabled={!phaseHasIssue || ![2, 3].includes(phaseReached) || Boolean(phaseActionPending)}
-                  title="Merge the task's open PR(s) — delegates to Agent 2 as Release Operator. Available during Implement or UAT after review passes."
-                  onClick={() => void mergeTaskPRs()}
-                >
-                  ⛙ Merge PRs
-                </button>
-              )}
               {activeIdeaType.requiresImplementation && (
                 <button
                   className="phase-btn done-now"
@@ -3663,14 +3700,6 @@ function App() {
                   </div>
                 )}
               </div>
-              <button
-                className="phase-btn resync"
-                disabled={!phaseHasIssue}
-                title="Re-sync from the board and have Agent 1 re-assess the current state. Use this only if the issue/board changed outside Twindem — normal reopen costs no tokens."
-                onClick={() => void resyncFromBoard()}
-              >
-                ⟳ Re-sync
-              </button>
             </div>
             </div>
             <div className="conductor-row">
@@ -4137,12 +4166,20 @@ function App() {
           onSave={saveSettings}
           onProjectDeleted={async (deletedName, deletedSessions) => {
             setSettingsOpen(false);
-            const refreshed = await window.tandem.config.get().then((r) => (r.ok ? r.data : null)).catch(() => null);
-            if (refreshed) setConfig(refreshed);
-            setSessions(await unwrap(window.tandem.sessions.list()).catch(() => []));
-            setDetail(null);
-            detailRef.current = null;
-            setNotice(`Deleted project "${deletedName}" — ${deletedSessions} task${deletedSessions === 1 ? "" : "s"} and all local data removed. Nothing on the remote board was touched.`);
+            await handleProjectDeleted(deletedName, deletedSessions);
+          }}
+        />
+      )}
+      {projectsOpen && config && (
+        <ProjectsDialog
+          config={config}
+          sessions={sessions}
+          activeWorkspaceName={config.defaults.workspaceName}
+          onClose={() => setProjectsOpen(false)}
+          onSetActive={(name) => void switchActiveProject(name)}
+          onDeleted={async (deletedName, deletedSessions, sourceFolderDeleted, sourceFolderDeleteError) => {
+            await handleProjectDeleted(deletedName, deletedSessions, sourceFolderDeleted);
+            if (sourceFolderDeleteError) setErrorNotice(`Project deleted, but source folder removal failed: ${sourceFolderDeleteError}`);
           }}
         />
       )}
@@ -5040,6 +5077,7 @@ function OnboardingDialog({
   const [leftArgs, setLeftArgs] = useState((leftProvider?.args ?? []).join(" "));
   const [leftModel, setLeftModel] = useState(leftProvider?.model ?? leftProvider?.version ?? "default");
   const [leftAuthMode, setLeftAuthMode] = useState<AgentAuthMode>(leftProvider?.authMode ?? "subscription");
+  const [leftDangerouslySkipPermissions, setLeftDangerouslySkipPermissions] = useState(Boolean(leftProvider?.dangerouslySkipPermissions));
   const [leftApiKey, setLeftApiKey] = useState("");
   const initialRolePartition = completeRolePartition(
     rolesFromPaneDefault(sourceLeftPane, DEFAULT_AGENT_1_ROLES),
@@ -5051,6 +5089,7 @@ function OnboardingDialog({
   const [rightArgs, setRightArgs] = useState((rightProvider?.args ?? []).join(" "));
   const [rightModel, setRightModel] = useState(rightProvider?.model ?? rightProvider?.version ?? "default");
   const [rightAuthMode, setRightAuthMode] = useState<AgentAuthMode>(rightProvider?.authMode ?? "subscription");
+  const [rightDangerouslySkipPermissions, setRightDangerouslySkipPermissions] = useState(Boolean(rightProvider?.dangerouslySkipPermissions));
   const [rightApiKey, setRightApiKey] = useState("");
   const [rightRoles, setRightRoles] = useState(initialRolePartition.R);
   const [leftCheck, setLeftCheck] = useState<CommandCheckResult | null>(null);
@@ -5293,7 +5332,7 @@ function OnboardingDialog({
     setRightRoles(partition.R);
   }
 
-  function validateCurrentStep(): boolean {
+  async function validateCurrentStep(): Promise<boolean> {
     setSetupError(null);
     if (currentStep === "project") {
       const name = workspaceName.trim();
@@ -5310,6 +5349,15 @@ function OnboardingDialog({
         setSetupError("Choose the project/application folder first.");
         return false;
       }
+      const folderCheck = await unwrap(window.tandem.config.validateDirectory(workspaceRoot));
+      if (!folderCheck.ok) {
+        setSetupError(folderCheck.message);
+        return false;
+      }
+    }
+    if (currentStep === "board" && boardType === "none") {
+      setSetupError("Choose Jira or GitHub. Twindem needs a board as the source of truth.");
+      return false;
     }
     if (currentStep === "statuses" && boardType === "jira" && jiraStatuses.length > 0) {
       // Only gate when statuses actually loaded — a load failure shouldn't trap the user.
@@ -5327,8 +5375,8 @@ function OnboardingDialog({
     return true;
   }
 
-  function goToNextStep() {
-    if (!validateCurrentStep()) return;
+  async function goToNextStep() {
+    if (!(await validateCurrentStep())) return;
     setStepIndex((index) => Math.min(steps.length - 1, index + 1));
   }
 
@@ -5343,6 +5391,12 @@ function OnboardingDialog({
     }
     if (!workspaceRoot.trim()) {
       setSetupError("Choose the project/application folder first.");
+      setStepIndex(0);
+      return;
+    }
+    const folderCheck = await unwrap(window.tandem.config.validateDirectory(workspaceRoot));
+    if (!folderCheck.ok) {
+      setSetupError(folderCheck.message);
       setStepIndex(0);
       return;
     }
@@ -5433,6 +5487,11 @@ function OnboardingDialog({
         }
       }
     }
+    if (boardType === "none") {
+      setSetupError("Choose Jira or GitHub. Twindem needs a board as the source of truth.");
+      setStepIndex(4);
+      return;
+    }
 
     const leftSecretRef = agentApiKeySecretRef(workspaceName, "L");
     const rightSecretRef = agentApiKeySecretRef(workspaceName, "R");
@@ -5472,12 +5531,14 @@ function OnboardingDialog({
         leftArgs,
         leftModel,
         leftAuthMode,
+        leftDangerouslySkipPermissions,
         leftSecretRef,
         leftRoles,
         rightCommand,
         rightArgs,
         rightModel,
         rightAuthMode,
+        rightDangerouslySkipPermissions,
         rightSecretRef,
         rightRoles,
         automationLevel: onboardingAutomation,
@@ -5515,7 +5576,10 @@ function OnboardingDialog({
               key={step.key}
               className={index === stepIndex ? "active" : index < stepIndex ? "complete" : ""}
               onClick={() => {
-                if (index <= stepIndex || validateCurrentStep()) setStepIndex(index);
+                if (index <= stepIndex) setStepIndex(index);
+                else void validateCurrentStep().then((ok) => {
+                  if (ok) setStepIndex(index);
+                });
               }}
             >
               <span>{index + 1}</span>
@@ -5631,8 +5695,10 @@ function OnboardingDialog({
             onArgsChange={setLeftArgs}
             onModelChange={setLeftModel}
             authMode={leftAuthMode}
+            dangerouslySkipPermissions={leftDangerouslySkipPermissions}
             apiKey={leftApiKey}
             onAuthModeChange={setLeftAuthMode}
+            onDangerouslySkipPermissionsChange={setLeftDangerouslySkipPermissions}
             onApiKeyChange={setLeftApiKey}
             roles={leftRoles}
             allRoles={Object.keys(config.roles)}
@@ -5662,8 +5728,10 @@ function OnboardingDialog({
             onArgsChange={setRightArgs}
             onModelChange={setRightModel}
             authMode={rightAuthMode}
+            dangerouslySkipPermissions={rightDangerouslySkipPermissions}
             apiKey={rightApiKey}
             onAuthModeChange={setRightAuthMode}
+            onDangerouslySkipPermissionsChange={setRightDangerouslySkipPermissions}
             onApiKeyChange={setRightApiKey}
             roles={rightRoles}
             allRoles={Object.keys(config.roles)}
@@ -5828,7 +5896,7 @@ function OnboardingDialog({
               Back
             </button>
             {stepIndex < steps.length - 1 ? (
-              <button className="primary" onClick={goToNextStep}>
+              <button className="primary" onClick={() => void goToNextStep()}>
                 Next
               </button>
             ) : (
@@ -6246,8 +6314,10 @@ function AgentSetupFields({
   onArgsChange,
   onModelChange,
   authMode,
+  dangerouslySkipPermissions,
   apiKey,
   onAuthModeChange,
+  onDangerouslySkipPermissionsChange,
   onApiKeyChange,
   roles,
   allRoles,
@@ -6263,8 +6333,10 @@ function AgentSetupFields({
   onArgsChange: (value: string) => void;
   onModelChange: (value: string) => void;
   authMode: AgentAuthMode;
+  dangerouslySkipPermissions: boolean;
   apiKey: string;
   onAuthModeChange: (value: AgentAuthMode) => void;
+  onDangerouslySkipPermissionsChange: (value: boolean) => void;
   onApiKeyChange: (value: string) => void;
   roles: string[];
   allRoles: string[];
@@ -6280,10 +6352,12 @@ function AgentSetupFields({
   function pickAgent(nextCommand: string) {
     const nextAgent = catalogAgentFor(nextCommand);
     const firstModel = nextAgent.models[0];
+    const nextFamily = providerFamily({ label: nextAgent.label, command: nextAgent.command });
     onCommandChange(nextAgent.command);
     onArgsChange(firstModel.args.join(" "));
     onModelChange(firstModel.label);
     onAuthModeChange(defaultAuthModeForCommand(nextAgent.command));
+    if (nextFamily !== "codex" && nextFamily !== "claude") onDangerouslySkipPermissionsChange(false);
   }
 
   function pickModel(modelId: string) {
@@ -6335,6 +6409,14 @@ function AgentSetupFields({
               />
             </label>
           )}
+          <label className="checkbox-row">
+            <input
+              type="checkbox"
+              checked={dangerouslySkipPermissions}
+              onChange={(event) => onDangerouslySkipPermissionsChange(event.target.checked)}
+            />
+            Skip CLI permission prompts (dangerous)
+          </label>
         </>
       )}
       <div className="setup-check-row">
@@ -6349,6 +6431,190 @@ function AgentSetupFields({
           <code>{installCommand}</code>
         </div>
       )}
+    </div>
+  );
+}
+
+type ProjectDeleteTarget = {
+  name: string;
+  root: string;
+  sessionCount: number;
+  deleteSourceFolder: boolean;
+  confirmationName: string;
+  deleting: boolean;
+  error?: string;
+};
+
+function ProjectsDialog({
+  config,
+  sessions,
+  activeWorkspaceName,
+  onClose,
+  onSetActive,
+  onDeleted
+}: {
+  config: TandemConfig;
+  sessions: SessionSummary[];
+  activeWorkspaceName?: string;
+  onClose: () => void;
+  onSetActive: (name: string) => void;
+  onDeleted: (deletedName: string, deletedSessions: number, sourceFolderDeleted?: boolean, sourceFolderDeleteError?: string) => void | Promise<void>;
+}) {
+  const [deleteTarget, setDeleteTarget] = useState<ProjectDeleteTarget | null>(null);
+  const workspaceNames = useMemo(() => config.workspaces.map((workspace) => workspace.name), [config.workspaces]);
+  const [usageByWorkspace, setUsageByWorkspace] = useState<Record<string, UsageSummary | null>>({});
+  const sessionCounts = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const session of sessions) {
+      const name = session.workspaceName ?? config.defaults.workspaceName ?? "";
+      if (!name) continue;
+      counts.set(name, (counts.get(name) ?? 0) + 1);
+    }
+    return counts;
+  }, [config.defaults.workspaceName, sessions]);
+  useEffect(() => {
+    let cancelled = false;
+    const loadUsage = async () => {
+      const entries = await Promise.all(
+        workspaceNames.map(async (name) => {
+          const result = await window.tandem.usage.workspaceSummary(name).catch(() => null);
+          return [name, result?.ok ? result.data ?? null : null] as const;
+        })
+      );
+      if (!cancelled) setUsageByWorkspace(Object.fromEntries(entries));
+    };
+    void loadUsage();
+    return () => {
+      cancelled = true;
+    };
+  }, [workspaceNames]);
+
+  async function deleteProject() {
+    if (!deleteTarget) return;
+    setDeleteTarget({ ...deleteTarget, deleting: true, error: undefined });
+    const result = await window.tandem.config.deleteProject(deleteTarget.name, {
+      deleteSourceFolder: deleteTarget.deleteSourceFolder,
+      confirmationName: deleteTarget.deleteSourceFolder ? deleteTarget.confirmationName : undefined
+    });
+    if (!result.ok) {
+      setDeleteTarget({ ...deleteTarget, deleting: false, error: result.error.message });
+      return;
+    }
+    setDeleteTarget(null);
+    await onDeleted(result.data.project, result.data.deletedSessions, result.data.sourceFolderDeleted, result.data.sourceFolderDeleteError);
+  }
+
+  return (
+    <div className="modal-backdrop">
+      {deleteTarget && (
+        <div className="modal-backdrop nested">
+          <section className="confirm-dialog danger-dialog project-delete-confirm">
+            <h2>Delete “{deleteTarget.name}”?</h2>
+            <p>
+              This removes all Twindem local data for this project: sessions, transcripts, evidence, agent runs,
+              local cache, saved project tokens, and the project config entry. Remote Jira/GitHub board items are not deleted.
+            </p>
+            <p className="confirm-note">Source folder: {deleteTarget.root || "not configured"}</p>
+            <label className="delete-board-option">
+              <input
+                type="checkbox"
+                checked={deleteTarget.deleteSourceFolder}
+                onChange={(event) =>
+                  setDeleteTarget((current) => current ? { ...current, deleteSourceFolder: event.target.checked, confirmationName: "" } : current)
+                }
+              />
+              <span>Delete source folder also</span>
+            </label>
+            {deleteTarget.deleteSourceFolder && (
+              <label>
+                Type the project name to confirm source deletion
+                <input
+                  value={deleteTarget.confirmationName}
+                  onChange={(event) => setDeleteTarget((current) => current ? { ...current, confirmationName: event.target.value } : current)}
+                  placeholder={deleteTarget.name}
+                />
+              </label>
+            )}
+            {deleteTarget.error && <p className="task-proposal-error">{deleteTarget.error}</p>}
+            <div className="footer-actions">
+              <button onClick={() => setDeleteTarget(null)} disabled={deleteTarget.deleting}>Cancel</button>
+              <button
+                className="danger"
+                onClick={() => void deleteProject()}
+                disabled={deleteTarget.deleting || (deleteTarget.deleteSourceFolder && deleteTarget.confirmationName !== deleteTarget.name)}
+              >
+                {deleteTarget.deleting ? "Deleting..." : "Delete project"}
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
+      <section className="settings-dialog refined projects-dialog">
+        <header>
+          <div>
+            <span className="eyebrow">Projects</span>
+            <h2>Projects</h2>
+            <p>Manage Twindem projects and local project data. Remote board items are never deleted here.</p>
+          </div>
+          <button onClick={onClose}>Close</button>
+        </header>
+        <div className="projects-list">
+          {config.workspaces.map((workspace) => {
+            const provider = boardProviderForWorkspace(config, workspace);
+            const boardLabel =
+              provider === "jira"
+                ? `Jira · ${workspace.jiraProjectKey ?? "not configured"}`
+                : provider === "github_project"
+                  ? workspace.githubOwner && workspace.projectNumber
+                    ? `GitHub · ${workspace.githubOwner} #${workspace.projectNumber}`
+                    : "GitHub · not configured"
+                  : "No board";
+            const isActive = workspace.name === activeWorkspaceName;
+            const sessionCount = sessionCounts.get(workspace.name) ?? 0;
+            const usage = usageByWorkspace[workspace.name];
+            return (
+              <article key={workspace.name} className="project-row-card">
+                <div>
+                  <div className="project-row-title">
+                    <strong>{workspace.name}</strong>
+                    {isActive && <span>Active</span>}
+                  </div>
+                  <p>{boardLabel}</p>
+                  <div className="project-row-usage">
+                    {usage === undefined
+                      ? "Usage loading..."
+                      : usage
+                        ? `~${formatCompactVolume(usage.totalEstimateTokens)} estimated terminal volume · in/out ~${formatCompactVolume(usage.inputEstimateTokens)} / ~${formatCompactVolume(usage.outputEstimateTokens)}`
+                        : "No usage recorded yet"}
+                  </div>
+                  <small>{workspace.root || "No local folder"}</small>
+                </div>
+                <div className="project-row-meta">
+                  <span>{sessionCount} task{sessionCount === 1 ? "" : "s"}</span>
+                  <button onClick={() => onSetActive(workspace.name)} disabled={isActive}>Set active</button>
+                  <button
+                    className="danger"
+                    onClick={() =>
+                      setDeleteTarget({
+                        name: workspace.name,
+                        root: workspace.root,
+                        sessionCount,
+                        deleteSourceFolder: false,
+                        confirmationName: "",
+                        deleting: false
+                      })
+                    }
+                    disabled={config.workspaces.length <= 1}
+                    title={config.workspaces.length <= 1 ? "Create another project before deleting the only project." : "Delete Twindem local data for this project."}
+                  >
+                    Delete
+                  </button>
+                </div>
+              </article>
+            );
+          })}
+        </div>
+      </section>
     </div>
   );
 }
@@ -6873,6 +7139,9 @@ function SettingsDialog({
     if (roleIssue) return roleIssue;
     const activeWs = activeWorkspace(draft);
     const activeBoardType = boardTypeForWorkspace(draft, activeWs);
+    if (activeBoardType === "none") {
+      return "Choose Jira or GitHub. Twindem needs a board as the source of truth.";
+    }
     if (activeBoardType === "github" && (!activeWs?.githubOwner?.trim() || !activeWs.projectNumber)) {
       return "Choose or create a GitHub Project board.";
     }
@@ -6917,6 +7186,13 @@ function SettingsDialog({
       return;
     }
     let nextDraft = draft;
+    for (const workspace of nextDraft.workspaces) {
+      const folderCheck = await unwrap(window.tandem.config.validateDirectory(workspace.root));
+      if (!folderCheck.ok) {
+        setSettingsError(`Project "${workspace.name}": ${folderCheck.message}`);
+        return;
+      }
+    }
     for (const [key, value] of Object.entries(profileApiKeys)) {
       if (!value.trim()) continue;
       const provider = draft.providers[key];
@@ -7385,6 +7661,16 @@ function SettingsDialog({
                           />
                         </label>
                       )}
+                      {(providerFamily(provider) === "codex" || providerFamily(provider) === "claude") && (
+                        <label className="checkbox-row">
+                          <input
+                            type="checkbox"
+                            checked={Boolean(provider.dangerouslySkipPermissions)}
+                            onChange={(event) => updateProvider(key, { dangerouslySkipPermissions: event.target.checked })}
+                          />
+                          Skip CLI permission prompts (dangerous)
+                        </label>
+                      )}
                       <label>
                         Resume command
                         <input
@@ -7774,6 +8060,7 @@ function NewSessionDialog({
   const [bugEvidence, setBugEvidence] = useState("");
   const [bugVerification, setBugVerification] = useState("");
   const [sessionAutomation, setSessionAutomation] = useState<AutomationLevel>("auto");
+  const [dangerouslySkipPermissions, setDangerouslySkipPermissions] = useState(false);
   // Files (images, zips with proposed designs, diagrams) the agents should inspect locally.
   const [attachments, setAttachments] = useState<string[]>([]);
   // Creating a session from a board issue syncs it from GitHub (4-5s) — show a loading overlay so
@@ -8039,6 +8326,7 @@ function NewSessionDialog({
         leftProvider,
         rightRole: roleLabel(rightRoles),
         rightProvider,
+        dangerouslySkipPermissions,
         localOnly: true
       });
     } finally {
@@ -8062,7 +8350,8 @@ function NewSessionDialog({
         leftRole: roleLabel(leftRoles),
         leftProvider,
         rightRole: roleLabel(rightRoles),
-        rightProvider
+        rightProvider,
+        dangerouslySkipPermissions
       });
       return;
     }
@@ -8100,7 +8389,8 @@ function NewSessionDialog({
       leftRole: roleLabel(leftRoles),
       leftProvider,
       rightRole: roleLabel(rightRoles),
-      rightProvider
+      rightProvider,
+      dangerouslySkipPermissions
     });
   }
 
@@ -8602,6 +8892,19 @@ function NewSessionDialog({
             }}
           />
         </div>
+        <section className="session-permissions-panel">
+          <label className="checkbox-row">
+            <input
+              type="checkbox"
+              checked={dangerouslySkipPermissions}
+              onChange={(event) => setDangerouslySkipPermissions(event.target.checked)}
+            />
+            <span>Skip CLI permission prompts for this task (dangerous)</span>
+          </label>
+          <small>
+            Applies only to the session created from this entry point. Leave off when this task should keep normal CLI approvals.
+          </small>
+        </section>
         <footer>
           <button onClick={onCancel} disabled={submitting}>Cancel</button>
           {entryKind !== "board" && !quickActive && (
@@ -9211,7 +9514,7 @@ function setupStatus(config: TandemConfig): { ok: boolean; missing: string[] } {
     }
     if (!workspace?.jiraApiTokenSecretRef?.trim()) missing.push("Jira token");
   }
-  if (boardType !== "github" && boardType !== "jira" && boardType !== "none") missing.push("board");
+  if (boardType === "none" || (boardType !== "github" && boardType !== "jira")) missing.push("board");
 
   return { ok: missing.length === 0, missing };
 }
@@ -9243,12 +9546,14 @@ function buildOnboardingConfig(
     leftArgs: string;
     leftModel: string;
     leftAuthMode: AgentAuthMode;
+    leftDangerouslySkipPermissions: boolean;
     leftSecretRef: string;
     leftRoles: string[];
     rightCommand: string;
     rightArgs: string;
     rightModel: string;
     rightAuthMode: AgentAuthMode;
+    rightDangerouslySkipPermissions: boolean;
     rightSecretRef: string;
     rightRoles: string[];
     automationLevel?: AutomationLevel;
@@ -9311,6 +9616,7 @@ function buildOnboardingConfig(
         authMode: input.leftAuthMode,
         apiKeyEnv: apiKeyEnvForCommand(input.leftCommand),
         apiKeySecretRef: input.leftAuthMode === "api_key" ? input.leftSecretRef : undefined,
+        dangerouslySkipPermissions: input.leftDangerouslySkipPermissions,
         supportsResume: true
       },
       [rightKey]: {
@@ -9322,6 +9628,7 @@ function buildOnboardingConfig(
         authMode: input.rightAuthMode,
         apiKeyEnv: apiKeyEnvForCommand(input.rightCommand),
         apiKeySecretRef: input.rightAuthMode === "api_key" ? input.rightSecretRef : undefined,
+        dangerouslySkipPermissions: input.rightDangerouslySkipPermissions,
         supportsResume: true
       }
     },
@@ -9414,6 +9721,19 @@ function providerInitial(provider: TandemConfig["providers"][string]): string {
   return provider.label.trim().slice(0, 2).toUpperCase() || "AI";
 }
 
+function appendUniqueArgs(baseArgs: string[], extraArgs: string[]): string[] {
+  const existing = new Set(baseArgs);
+  return [...baseArgs, ...extraArgs.filter((arg) => !existing.has(arg))];
+}
+
+function permissionBypassArgs(provider: TandemConfig["providers"][string], family: string, sessionOverride?: boolean): string[] {
+  const skipPermissions = sessionOverride ?? provider.dangerouslySkipPermissions;
+  if (!skipPermissions) return [];
+  if (family === "claude") return ["--dangerously-skip-permissions"];
+  if (family === "codex") return ["--dangerously-bypass-approvals-and-sandbox"];
+  return [];
+}
+
 function templateLabel(key: string): string {
   const labels: Record<string, string> = {
     handoffReview: "Handoff review",
@@ -9444,17 +9764,18 @@ function canResumeAgent(detail: SessionDetail, side: AgentSide): boolean {
 
 function resolveAgentLaunch(
   provider: TandemConfig["providers"][string] | undefined,
-  resume: boolean
+  resume: boolean,
+  sessionSkipPermissions?: boolean
 ): { command: string | undefined; args: string[]; resumeCommand: string | undefined; resumeArgs: string[] } {
   if (!provider) {
     return { command: undefined, args: [], resumeCommand: undefined, resumeArgs: [] };
   }
   const family = providerFamily(provider);
-  const baseArgs = provider.args ?? [];
+  const baseArgs = appendUniqueArgs(provider.args ?? [], permissionBypassArgs(provider, family, sessionSkipPermissions));
   const resumeCommand = provider.resumeCommand?.trim() || provider.command;
   const resumeArgs = provider.resumeCommand?.trim()
-    ? provider.resumeArgs ?? []
-    : defaultResumeArgs(provider, family);
+    ? appendUniqueArgs(provider.resumeArgs ?? [], permissionBypassArgs(provider, family, sessionSkipPermissions))
+    : defaultResumeArgs(provider, family, sessionSkipPermissions);
 
   if (resume) {
     return {
@@ -9475,11 +9796,16 @@ function resolveAgentLaunch(
 
 function defaultResumeArgs(
   provider: TandemConfig["providers"][string],
-  family: string
+  family: string,
+  sessionSkipPermissions?: boolean
 ): string[] {
-  const baseArgs = provider.args ?? [];
+  const bypassArgs = permissionBypassArgs(provider, family, sessionSkipPermissions);
+  const baseArgs = appendUniqueArgs(provider.args ?? [], bypassArgs);
   if (family === "claude") return [...baseArgs, "--continue"];
-  if (family === "codex") return ["resume", "--last", ...baseArgs];
+  if (family === "codex") {
+    const userArgs = (provider.args ?? []).filter((arg) => !bypassArgs.includes(arg));
+    return [...bypassArgs, "resume", "--last", ...userArgs];
+  }
   return provider.resumeArgs?.length ? provider.resumeArgs : baseArgs;
 }
 
@@ -9611,7 +9937,7 @@ function ensureUsableActiveWorkspace(config: TandemConfig): TandemConfig {
     if (!workspace?.root?.trim()) return false;
     if (boardType === "github") return Boolean(workspace.githubOwner?.trim() && workspace.projectNumber);
     if (boardType === "jira") return Boolean(workspace.jiraSiteUrl?.trim() && workspace.jiraProjectKey?.trim());
-    return boardType === "none";
+    return false;
   };
   if (workspaceUsable(current)) return config;
   const fallback = config.workspaces.find(workspaceUsable);
@@ -9766,8 +10092,17 @@ const VISIBLE_PHASE_TO_SLOT: Record<VisiblePhase, BoardStatusSlot> = {
 // is what lets the auto review loop start in Refinement on Jira, not just GitHub.
 function sessionPhaseReached(detail: SessionDetail, workspace?: TandemConfig["workspaces"][number]): number {
   const boardStatus = boardStatusForSession(detail);
-  if (isRealBoardStatus(boardStatus)) return phaseReachedFromStatus(boardStatus, workspace);
-  return phaseIndexForSlot(VISIBLE_PHASE_TO_SLOT[detail.session.visiblePhase] ?? "inbox");
+  const localPhase = phaseIndexForSlot(VISIBLE_PHASE_TO_SLOT[detail.session.visiblePhase] ?? "inbox");
+  if (!boardStatus || !isRealBoardStatus(boardStatus)) return localPhase;
+  const realBoardStatus = boardStatus;
+  const boardPhase = phaseReachedFromStatus(boardStatus, workspace);
+  const duplicateWriteStatus =
+    workspace &&
+    Object.values(workspace.statusMapping.write).filter((status) => status.trim().toLowerCase() === realBoardStatus.trim().toLowerCase()).length > 1;
+  // Jira workflows often map several Twindem slots (in_progress/review/uat) to the same real status.
+  // In that case the raw board status cannot tell those slots apart, so keep the explicit local phase
+  // Twindem persisted when it moved the task.
+  return duplicateWriteStatus ? Math.max(boardPhase, localPhase) : boardPhase;
 }
 
 type TaskBadgeKey = "not_started" | "refinement" | "in_progress" | "uat" | "done" | "blocked";
@@ -10221,6 +10556,39 @@ function boardCommentProtocolLines(
   ];
 }
 
+function releaseDeliveryContextLines(workspace?: TandemConfig["workspaces"][number]): string[] {
+  const root = workspace?.root?.trim();
+  const deliveryRepos = (workspace?.projectLayout ?? []).filter(
+    (entry) => entry.label.trim() && entry.path.trim() && entry.repo?.owner?.trim() && entry.repo?.name?.trim()
+  );
+  if (!root && deliveryRepos.length === 0 && !workspace?.principalRepo) return [];
+  const rootPrefix = root?.replace(/\/+$/, "");
+  const pathFor = (path?: string): string => {
+    const norm = (path ?? "").trim().replace(/^\.?\/+/, "").replace(/\/+$/, "");
+    if (!rootPrefix) return norm || ".";
+    return norm ? `${rootPrefix}/${norm}` : rootPrefix;
+  };
+  const lines = ["", "Workspace delivery map:"];
+  if (rootPrefix) lines.push(`- Workspace root: ${rootPrefix}`);
+  if (workspace?.principalRepo) {
+    lines.push(`- Principal/root repo: ${pathFor(workspace.principalRepo.path)} -> ${workspace.principalRepo.owner}/${workspace.principalRepo.name}`);
+  }
+  lines.push(
+    ...deliveryRepos.map((entry) => `- ${entry.label.trim()}: ${pathFor(entry.path)} -> ${entry.repo!.owner}/${entry.repo!.name}`)
+  );
+  if (deliveryRepos.length > 0 || workspace?.principalRepo) {
+    lines.push(
+      "Delivery rule for mapped component repos: the local component path is the SOURCE tree, but the GitHub repo on the right is the DELIVERY repo. If the source path is not already a checkout of that exact GitHub repo, do NOT add that repo as a remote and push the source branch directly.",
+      "A configured `origin` alone is not enough to treat the source path as the delivery repo. First verify the source branch has common history with the delivery repo's main/default branch; if it does not, use the separate delivery-repo checkout flow.",
+      "Instead, create or reuse a separate checkout/worktree of the delivery repo, branch from its main/default branch, copy the source component contents into that checkout, commit there, push that branch, and open the PR from that delivery repo history.",
+      "Use committed task-specific source changes as the delivery delta. Do NOT use `git status --short` or arbitrary dirty/untracked files as the file list; dirty files may belong to another task. Identify commits for the current board task/ref, restrict them to the mapped source component path, then copy those paths into the delivery checkout with the component prefix stripped.",
+      "Before committing in the delivery checkout, verify the diff is non-empty and task-relevant. If the diff is empty or only touches files unrelated to the current board task, STOP and report the mismatch instead of opening a PR.",
+      "A GitHub error like 'branch has no history in common with main' means you pushed from the source component history by mistake. Correct it by using the separate delivery-repo checkout flow above; that is the required delivery path, not an alternative workaround."
+    );
+  }
+  return lines;
+}
+
 // A board comment summarizing an A2 verdict + findings — posted by Twindem on boards the agents can't
 // write to (Jira). Keeps the review trail visible on the board, same as gh comments do on GitHub.
 function reviewVerdictComment(round: number, verdict: string | undefined, findings?: ReviewFinding[]): string {
@@ -10506,7 +10874,7 @@ function phaseActionText(type: ReturnType<typeof ideaTypeDefinition>) {
     planningBody: "Agent 1 plans; Agent 2 reviews. When the plan passes, Move to Implement.",
     uatLabel: "Move to UAT",
     uatHint: "Move to UAT for testing.",
-    uatBody: "Validate in UAT. When ready, Move to production.",
+    uatBody: "Validate in UAT. When ready, merge PRs, then Move to production.",
     doneLabel: "Move to production",
     doneHint: "Move to Done (production)."
   };
@@ -10554,7 +10922,13 @@ function phaseReachedFromStatus(status?: string | null, workspace?: TandemConfig
 
 // Release Operator: deploy following the operator-written runbook from Settings. The runbook is
 // sensitive local data — passed only to the local agent CLI, never anywhere else.
-function releaseOpsInstruction(detail: SessionDetail, target: "UAT" | "PRODUCTION", runbook: string, signature?: string): string {
+function releaseOpsInstruction(
+  detail: SessionDetail,
+  target: "UAT" | "PRODUCTION",
+  runbook: string,
+  signature?: string,
+  workspace?: TandemConfig["workspaces"][number]
+): string {
   const ref = boardArtifactRefForSession(detail.session);
   const url = boardArtifactUrlForDetail(detail);
   const signalJson =
@@ -10568,6 +10942,8 @@ function releaseOpsInstruction(detail: SessionDetail, target: "UAT" | "PRODUCTIO
   return [
     `Twindem — release to ${target} for board task ${ref}.`,
     ...(url ? [`URL: ${url}`] : []),
+    ...projectContextLines(workspace),
+    ...releaseDeliveryContextLines(workspace),
     "You are the Release Operator (Agent 2). Follow the operator-provided release instructions below EXACTLY — do not improvise alternative deploy paths. If a step fails, STOP and report instead of working around it.",
     "----- OPERATOR RELEASE INSTRUCTIONS -----",
     runbook,
@@ -10838,7 +11214,7 @@ function deriveConductorState(
   const phaseText = phaseActionText(type);
   const sourceStatus = boardStatusForSession(detail);
   if (isRealBoardStatus(sourceStatus)) {
-    const boardPhase = phaseReachedFromStatus(sourceStatus, workspace);
+    const boardPhase = sessionPhaseReached(detail, workspace);
     if (boardPhase >= 4) {
       return { currentStepId: "done", nextStepId: "done", checkpointTitle: "Done", checkpointBody: "The task is in Done.", checkpointTone: "green", primaryAction: "—", round };
     }
