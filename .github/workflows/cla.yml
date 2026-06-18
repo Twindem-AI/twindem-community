@@ -28,7 +28,11 @@ jobs:
         with:
           path-to-signatures: "signatures/version1/cla.json"
           path-to-document: "https://github.com/Twindem-AI/twindem-community/blob/main/CLA.md"
-          branch: "main"
+          # Signatures are stored on a dedicated UNPROTECTED branch. Storing them on
+          # `main` breaks the check: the bot can't commit the signatures file to a
+          # protected branch ("Repository rule violations found"), failing CLAAssistant
+          # on every PR. Do not protect `cla-signatures`.
+          branch: "cla-signatures"
           # Maintainers / bots that never need to sign.
           allowlist: vashanea,*[bot]
           custom-pr-sign-comment: "I have read the CLA Document and I hereby sign the CLA"
