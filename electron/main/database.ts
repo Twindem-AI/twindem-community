@@ -53,6 +53,47 @@ const evidenceTitles: Record<string, string> = {
 
 const ACTIVE_SESSION_SETTING_KEY = "active_session_id";
 
+type UsageSummaryRow = {
+  side?: AgentSide;
+  provider?: string;
+  model?: string;
+  phase: string;
+  input: number;
+  output: number;
+};
+
+function usageSummaryFromRows(rows: UsageSummaryRow[]): UsageSummary | undefined {
+  if (rows.length === 0) return undefined;
+
+  const byAgentMap = new Map<string, UsageSummary["byAgent"][number]>();
+  const byPhaseMap = new Map<string, UsageSummary["byPhase"][number]>();
+  let inputTotal = 0;
+  let outputTotal = 0;
+  for (const row of rows) {
+    inputTotal += row.input;
+    outputTotal += row.output;
+    const agentKey = `${row.side ?? ""}|${row.provider ?? ""}|${row.model ?? ""}`;
+    const agent = byAgentMap.get(agentKey) ?? {
+      side: row.side ?? undefined,
+      provider: row.provider ?? undefined,
+      model: row.model ?? undefined,
+      totalEstimateTokens: 0
+    };
+    agent.totalEstimateTokens += row.input + row.output;
+    byAgentMap.set(agentKey, agent);
+    const phase = byPhaseMap.get(row.phase) ?? { phase: row.phase, totalEstimateTokens: 0 };
+    phase.totalEstimateTokens += row.input + row.output;
+    byPhaseMap.set(row.phase, phase);
+  }
+  return {
+    inputEstimateTokens: inputTotal,
+    outputEstimateTokens: outputTotal,
+    totalEstimateTokens: inputTotal + outputTotal,
+    byAgent: Array.from(byAgentMap.values()),
+    byPhase: Array.from(byPhaseMap.values())
+  };
+}
+
 type WorkspaceConfig = TandemConfig["workspaces"][number];
 
 function mapProjectStatus(projectStatus: string, workspace?: WorkspaceConfig): {
@@ -84,6 +125,7 @@ export class TandemDatabase {
                 workspace_name as workspaceName,
                 left_role as leftRole, left_provider as leftProvider,
                 right_role as rightRole, right_provider as rightProvider,
+                dangerously_skip_permissions as dangerouslySkipPermissions,
                 visible_phase as visiblePhase, internal_state as internalState, status,
                 round_n as roundN, round_total as roundTotal,
                 created_at as createdAt, updated_at as updatedAt,
@@ -100,8 +142,13 @@ export class TandemDatabase {
       )
       .all()
       .map((row) => {
-        const r = row as SessionSummary & { hidden?: number };
-        return { ...r, agentRunCount: Number(r.agentRunCount ?? 0), hidden: Boolean(r.hidden) } as SessionSummary;
+        const r = row as SessionSummary & { hidden?: number; dangerouslySkipPermissions?: number | null };
+        return {
+          ...r,
+          agentRunCount: Number(r.agentRunCount ?? 0),
+          hidden: Boolean(r.hidden),
+          dangerouslySkipPermissions: r.dangerouslySkipPermissions == null ? undefined : Boolean(r.dangerouslySkipPermissions)
+        } as SessionSummary;
       });
   }
 
@@ -207,6 +254,7 @@ export class TandemDatabase {
                 workspace_name as workspaceName,
                 left_role as leftRole, left_provider as leftProvider,
                 right_role as rightRole, right_provider as rightProvider,
+                dangerously_skip_permissions as dangerouslySkipPermissions,
                 visible_phase as visiblePhase, internal_state as internalState, status,
                 round_n as roundN, round_total as roundTotal,
                 created_at as createdAt, updated_at as updatedAt,
@@ -218,11 +266,16 @@ export class TandemDatabase {
                 spawned_order as spawnedOrder
            FROM sessions WHERE id = ?`
       )
-      .get(id) as SessionSummary | undefined;
+      .get(id) as (Omit<SessionSummary, "dangerouslySkipPermissions"> & { dangerouslySkipPermissions?: number | null }) | undefined;
     if (!session) return null;
+    const normalizedSession: SessionSummary = {
+      ...session,
+      dangerouslySkipPermissions:
+        session.dangerouslySkipPermissions == null ? undefined : Boolean(session.dangerouslySkipPermissions)
+    };
 
     const detail = {
-      session,
+      session: normalizedSession,
       runs: this.db
         .prepare(
           `SELECT id, session_id as sessionId, side, role, provider,
@@ -569,9 +622,10 @@ export class TandemDatabase {
          (id, title, initial_body, artifact_type, repo_owner, repo_name, issue_number, pr_number,
           board_provider, board_item_id, board_item_key, board_item_url, branch_name,
           idea_type, workspace_name, left_role, left_provider, right_role, right_provider,
+          dangerously_skip_permissions,
           visible_phase, internal_state, status, round_n, round_total, created_at, updated_at,
           spawned_from_session_id, spawned_from_task_id, spawned_fingerprint, spawned_from_board_ref, spawned_order)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?)`
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         id,
@@ -593,6 +647,7 @@ export class TandemDatabase {
         input.leftProvider ?? null,
         input.rightRole ?? null,
         input.rightProvider ?? null,
+        input.dangerouslySkipPermissions ? 1 : 0,
         visiblePhase,
         internalState,
         "waiting",
@@ -1291,43 +1346,24 @@ export class TandemDatabase {
           WHERE session_id = ?
           GROUP BY agent_side, provider, model, COALESCE(phase, 'unknown')`
       )
-      .all(sessionId) as Array<{
-      side?: AgentSide;
-      provider?: string;
-      model?: string;
-      phase: string;
-      input: number;
-      output: number;
-    }>;
-    if (rows.length === 0) return undefined;
+      .all(sessionId) as UsageSummaryRow[];
+    return usageSummaryFromRows(rows);
+  }
 
-    const byAgentMap = new Map<string, UsageSummary["byAgent"][number]>();
-    const byPhaseMap = new Map<string, UsageSummary["byPhase"][number]>();
-    let inputTotal = 0;
-    let outputTotal = 0;
-    for (const row of rows) {
-      inputTotal += row.input;
-      outputTotal += row.output;
-      const agentKey = `${row.side ?? ""}|${row.provider ?? ""}|${row.model ?? ""}`;
-      const agent = byAgentMap.get(agentKey) ?? {
-        side: row.side ?? undefined,
-        provider: row.provider ?? undefined,
-        model: row.model ?? undefined,
-        totalEstimateTokens: 0
-      };
-      agent.totalEstimateTokens += row.input + row.output;
-      byAgentMap.set(agentKey, agent);
-      const phase = byPhaseMap.get(row.phase) ?? { phase: row.phase, totalEstimateTokens: 0 };
-      phase.totalEstimateTokens += row.input + row.output;
-      byPhaseMap.set(row.phase, phase);
-    }
-    return {
-      inputEstimateTokens: inputTotal,
-      outputEstimateTokens: outputTotal,
-      totalEstimateTokens: inputTotal + outputTotal,
-      byAgent: Array.from(byAgentMap.values()),
-      byPhase: Array.from(byPhaseMap.values())
-    };
+  workspaceUsageSummary(workspaceName: string): UsageSummary | undefined {
+    const rows = this.db
+      .prepare(
+        `SELECT usage_events.agent_side as side, usage_events.provider, usage_events.model,
+                COALESCE(usage_events.phase, 'unknown') as phase,
+                SUM(usage_events.input_estimate_tokens) as input,
+                SUM(usage_events.output_estimate_tokens) as output
+           FROM usage_events
+           LEFT JOIN sessions ON sessions.id = usage_events.session_id
+          WHERE COALESCE(usage_events.workspace_name, sessions.workspace_name) = ?
+          GROUP BY usage_events.agent_side, usage_events.provider, usage_events.model, COALESCE(usage_events.phase, 'unknown')`
+      )
+      .all(workspaceName) as UsageSummaryRow[];
+    return usageSummaryFromRows(rows);
   }
 
   private sessionWorkspaceName(sessionId: string): string | undefined {
@@ -1763,6 +1799,9 @@ export class TandemDatabase {
       CREATE INDEX IF NOT EXISTS idx_usage_events_session_created
       ON usage_events(session_id, created_at);
 
+      CREATE INDEX IF NOT EXISTS idx_usage_events_workspace_created
+      ON usage_events(workspace_name, created_at);
+
       CREATE UNIQUE INDEX IF NOT EXISTS idx_usage_events_run
       ON usage_events(run_id) WHERE run_id IS NOT NULL;
 
@@ -1832,6 +1871,7 @@ export class TandemDatabase {
     this.ensureColumn("sessions", "left_provider", "TEXT");
     this.ensureColumn("sessions", "right_role", "TEXT");
     this.ensureColumn("sessions", "right_provider", "TEXT");
+    this.ensureColumn("sessions", "dangerously_skip_permissions", "INTEGER");
     this.ensureColumn("sessions", "hidden", "INTEGER DEFAULT 0");
     this.ensureColumn("sessions", "spawned_from_session_id", "TEXT");
     this.ensureColumn("sessions", "spawned_from_task_id", "TEXT");

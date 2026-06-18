@@ -12,6 +12,7 @@ export const ProviderSchema = z.object({
   authMode: z.enum(["none", "subscription", "api_key"]).optional(),
   apiKeyEnv: z.string().optional(),
   apiKeySecretRef: z.string().optional(),
+  dangerouslySkipPermissions: z.boolean().optional(),
   supportsResume: z.boolean().default(false)
 });
 

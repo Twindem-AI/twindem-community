@@ -42,6 +42,7 @@ export type TandemApi = {
   app: {
     onNewProject: (callback: () => void) => () => void;
     onOpenSettings: (callback: () => void) => () => void;
+    onOpenProjects: (callback: () => void) => () => void;
     onTasksChanged: (callback: () => void) => () => void;
     onAbout: (callback: () => void) => () => void;
     version: () => Promise<TandemResult<string>>;
@@ -51,13 +52,17 @@ export type TandemApi = {
     get: () => Promise<TandemResult<TandemConfig>>;
     save: (config: TandemConfig) => Promise<TandemResult<TandemConfig>>;
     pickDirectory: () => Promise<TandemResult<string | null>>;
+    validateDirectory: (path: string) => Promise<TandemResult<{ ok: boolean; message: string }>>;
     pickFiles: (defaultPath?: string) => Promise<TandemResult<string[] | null>>;
     pickWorkspaceSubdirectory: (root: string) => Promise<TandemResult<{ absolutePath: string; relativePath: string } | null>>;
     importFile: () => Promise<TandemResult<TandemConfig | null>>;
     exportFile: (config: TandemConfig) => Promise<TandemResult<string | null>>;
     // Delete all LOCAL data for a project (sessions + DB + .twindem cache + token + config entry).
     // Never touches the code folder or the remote board.
-    deleteProject: (workspaceName: string) => Promise<TandemResult<{ deletedSessions: number; project: string }>>;
+    deleteProject: (
+      workspaceName: string,
+      options?: { deleteSourceFolder?: boolean; confirmationName?: string }
+    ) => Promise<TandemResult<{ deletedSessions: number; project: string; sourceFolderDeleted?: boolean; sourceFolderDeleteError?: string }>>;
   };
   secrets: {
     set: (ref: string, value: string) => Promise<TandemResult<boolean>>;
@@ -178,6 +183,7 @@ export type TandemApi = {
     // carries just usageSummary.
     list: (sessionId: string) => Promise<TandemResult<UsageEvent[]>>;
     summary: (sessionId: string) => Promise<TandemResult<UsageSummary | undefined>>;
+    workspaceSummary: (workspaceName: string) => Promise<TandemResult<UsageSummary | undefined>>;
   };
   jira: {
     // Draft-credentials path (Onboarding — token not saved yet).
