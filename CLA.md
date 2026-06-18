@@ -3,8 +3,8 @@
 **Version 1.0**
 
 Thank you for your interest in contributing to Twindem (the "Project"), maintained
-by **Mykey Digital S.R.L.**, a company registered in Bucharest, Romania, represented
-by Vasile Hanea (the "Maintainers").
+by **Tixmondo S.R.L.**, a company registered in Romania, represented by Vasile Hanea
+(the "Maintainers").
 
 This Contributor License Agreement ("Agreement") documents the rights granted by
 contributors to the Maintainers. It protects you as a contributor as well as the
@@ -125,5 +125,5 @@ signing in writing.
 > dual-licensing / relicensing grant in Section 2, which is what enables selling a
 > commercial license alongside the public AGPL-3.0 release. This template is provided as
 > a starting point and is **not legal advice** — have it reviewed by a Romanian lawyer
-> before you rely on it (rights holder = Mykey Digital S.R.L.). If companies will
+> before you rely on it (rights holder = Tixmondo S.R.L.). If companies will
 > contribute on behalf of employees, also prepare a **Corporate CLA (CCLA)** counterpart.
