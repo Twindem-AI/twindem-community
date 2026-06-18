@@ -24,6 +24,7 @@
     "build": "tsc -b && tsc -p tsconfig.electron.json && vite build",
     "dist:dev": "npm run build && CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac dmg zip",
     "dist": "npm run build && electron-builder --mac --x64 --arm64",
+    "publish:mac": "npm run build && electron-builder --mac --x64 --arm64 --publish always",
     "dist:arm64": "npm run build && electron-builder --mac --arm64",
     "dist:x64": "npm run build && electron-builder --mac --x64",
     "lint": "eslint .",
@@ -69,6 +70,11 @@
     },
     "dmg": {
       "artifactName": "Twindem-${version}-${arch}.${ext}"
+    },
+    "publish": {
+      "provider": "github",
+      "owner": "Twindem-AI",
+      "repo": "twindem-community"
     }
   },
   "devDependencies": {
