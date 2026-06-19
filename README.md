@@ -26,6 +26,12 @@ AI coding agents are useful, but raw agent chats are hard to manage in a team or
 
 ## Screenshots
 
+**See it in action** — from a board task to a governed two-agent delivery loop.
+
+<p align="center">
+  <img src="docs/images/demo.gif" alt="Twindem in action" width="900" />
+</p>
+
 **The board is the source of truth** — GitHub Projects or Jira, kept in sync both ways.
 
 ![Board view](docs/images/board.png)
